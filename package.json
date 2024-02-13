@@ -1,0 +1,14 @@
+{
+  "name": "pixels",
+  "author": "Laurent Houdard (https://laurent.houdard.net/)",
+  "description": "Pixels - Part of the group exhibition XPRMNT at GALERIE DATA Paris, 2024",
+  "version": "1.0.0",
+  "license": "CC-BY-NC-ND-4.0",
+  "private": true,
+  "scripts": {
+    "start": "live-server"
+  },
+  "dependencies": {
+    "live-server": "^1.2.2"
+  }
+}

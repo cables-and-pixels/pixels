@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>Pixels</title>
+  <meta charset="utf-8">
+  <link rel="icon" href="data:;base64,iVBORw0KGgo=">
+  <meta name="viewport" content="initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <style>
+  html, body { width: 100vw; height: 100vh; }
+  body { margin: 0; display: flex; overflow: hidden; }
+  canvas { width: 100vw; height: 100vh; object-fit: cover; }
+  </style>
+</head>
+<body>
+<script>
+
+console.info(`
+%cPixels%c
+https://laurent.houdard.net/
+
+space or click = play/pause
+m = toggle pixelated/alt. mode
+s = save frame
+`, 'font-weight: bold', '');
+
+const search = new URLSearchParams(window.location.search);
+let mode = search.get('mode') || '';
+
+const hash = 'Ahciela6ahnie7Iiloqueiv5eeth2eowohphahreepooc4Ne';
+const w = 1920;
+const h = 1920;
+const Ft = 30;
+const Fi = 12;
+const speed = 0.6;
+const S = w * h * 4;
+
+const alphabet = "123456789abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ";
+const b58dec = str => [...str].reduce((p, c) => p * alphabet.length + alphabet.indexOf(c) | 0, 0);
+const regex = new RegExp(".{" + ((hash.length/4)|0) + "}", 'g');
+const hashes = hash.match(regex).map(h => b58dec(h));
+const sfc32 = (a, b, c, d) => {
+  return () => {
+    a |= 0; b |= 0; c |= 0; d |= 0;
+    var t = (a + b | 0) + d | 0;
+    d = d + 1 | 0;
+    a = b ^ b >>> 9;
+    b = c + (c << 3) | 0;
+    c = c << 21 | c >>> 11;
+    c = c + t | 0;
+    return (t >>> 0) / 4294967296;
+  }
+};
+const R = sfc32(...hashes);
+const c = document.createElement('canvas');
+
+document.body.append(c);
+c.width = w;
+c.height = h;
+
+const gl = c.getContext('webgl2', {
+  preserveDrawingBuffer: true,
+});
+
+const createAndLinkProgram = (gl, vert, frag) => {
+  const p = gl.createProgram();
+  for (let [t, src] of [
+    [gl.VERTEX_SHADER, vert],
+    [gl.FRAGMENT_SHADER, frag],
+  ]) {
+    const s = gl.createShader(t);
+    gl.shaderSource(s, '#version 300 es' + src);
+    gl.compileShader(s);
+    gl.attachShader(p, s);
+  }
+  gl.linkProgram(p);
+  return p;
+};
+
+const getActiveUniforms = (gl, p) => {
+  const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+  const uniforms = {};
+  for (let i = 0; i < n; i++) {
+    const { name, type } = gl.getActiveUniform(p, i);
+    const location = gl.getUniformLocation(p, name);
+    uniforms[name] = { location, type };
+  }
+  return uniforms;
+};
+
+const vert = `
+out vec2 p;
+void main() {
+  vec3 v = vec3(-1);
+  v[gl_VertexID] = 3.;
+  gl_Position = vec4(p = v.xy, 0, 1);
+}`;
+
+const frag = `
+precision highp float;
+in vec2 p;
+out vec4 c;
+uniform sampler2D s;
+uniform float m;
+uniform int k;
+void main() {
+  vec2 uv1 = .5 + .5 * p;
+  vec2 uv2 = .75 + .25 * (k == 0 ? p : p.yx);
+  float c1 = texture(s, uv1).r;
+  float c2 = smoothstep(0., 1., .5 * (
+    texture(s, uv1).r +
+    texture(s, uv2).r
+  ));
+  c = vec4(vec3(mix(c1, c2, .5 * m)), 1);
+}`;
+
+const ofrag = `
+precision highp float;
+in vec2 p;
+out vec4 c;
+uniform sampler2D s;
+void main() {
+  c = texture(s, .5 + .5 * p);
+}`;
+
+const p = createAndLinkProgram(gl, vert, frag);
+const ploc = getActiveUniforms(gl, p);
+const o = createAndLinkProgram(gl, vert, ofrag);
+const oloc = getActiveUniforms(gl, o);
+
+let t = [0, 1].map(_ => {
+  const t = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  return t;
+});
+
+let b = t.map((x) => {
+  const fb = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+  gl.framebufferTexture2D(
+    gl.FRAMEBUFFER,
+    gl.COLOR_ATTACHMENT0,
+    gl.TEXTURE_2D,
+    x,
+    0
+  );
+  return fb;
+});
+
+const setMode = () => {
+  const filter = mode === 'alt' ? gl.LINEAR : gl.NEAREST;
+  for (let i of [0, 1]) {
+    gl.bindTexture(gl.TEXTURE_2D, t[i]);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+  }
+  c.style.imageRendering = mode === 'alt' ? 'smooth' : 'pixelated';
+};
+
+const draw = (k, m) => {
+  gl.useProgram(p);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, b[1]);
+  gl.uniform1i(ploc.k.location, k);
+  gl.uniform1f(ploc.m.location, m);
+  gl.uniform1i(ploc.s.location, 0);
+  gl.activeTexture(gl.TEXTURE0 + 0);
+  gl.bindTexture(gl.TEXTURE_2D, t[0]);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+};
+
+const out = () => {
+  gl.useProgram(o);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.uniform1i(oloc.s.location, 0);
+  gl.activeTexture(gl.TEXTURE0 + 0);
+  gl.bindTexture(gl.TEXTURE_2D, t[1]);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+};
+
+const swap = () => {
+  [b[0], b[1]] = [b[1], b[0]];
+  [t[0], t[1]] = [t[1], t[0]];
+};
+
+let af = null;
+
+const stop = () => {
+  if (af) {
+    cancelAnimationFrame(af);
+    af = null;
+  }
+};
+
+let f;
+let m;
+let k;
+let fc;
+let time;
+
+const start = async () => {
+  f = Ft - Fi;
+  m = 0;
+  k = R() > .5 ? 1 : 0;
+  fc = 0;
+
+  const data = new Uint8Array(S);
+  for (let i = 0; i < S; i++) {
+    data[i] = R() * 256;
+  }
+  gl.bindTexture(gl.TEXTURE_2D, t[0]);
+  gl.texImage2D(
+    gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, data
+  );
+  gl.bindTexture(gl.TEXTURE_2D, t[1]);
+  gl.texImage2D(
+    gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, data
+  );
+
+  for (let i = 0; i < Fi; i++) {
+    draw(k, 1);
+    swap();
+  }
+
+  time = performance.now();
+  await next();
+};
+
+const next = async () => {
+  draw(k, m);
+  out();
+  const ntime = performance.now();
+  const dt = ntime - time;
+  time = ntime;
+  if (m < 1) {
+    const d = 1 / (fc + 1);
+    m += speed * d * dt / 15;
+    if (m > 1) { m = 1; }
+  }
+  else {
+    swap();
+    fc += 1;
+    m = 0;
+    time = performance.now();
+    f--;
+  }
+  af = requestAnimationFrame(f >= 0 ? next : start);
+};
+
+const togglePause = () => {
+  if (af) {
+    stop();
+  }
+  else {
+    time = performance.now();
+    af = requestAnimationFrame(f >= 0 ? next : start);
+  }
+};
+
+const toggleMode = () => {
+  stop();
+  mode = mode === '' ? 'alt' : '';
+  setMode();
+  start();
+};
+
+const saveAs = (blob, filename) => {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+};
+
+const saveFrame = async () => {
+  const id = new Date().getTime();
+  const filename = `pixels-${id}.png`;
+  return new Promise((resolve) => {
+    c.toBlob((blob) => {
+      saveAs(blob, filename);
+      console.log(`Saved to ${filename}.`);
+      resolve();
+    });
+  });
+}
+
+document.addEventListener('keydown', async (e) => {
+  if (e.key === 's') { await saveFrame(); }
+  if (e.key === 'm') { toggleMode(); }
+  if (e.key === ' ') { togglePause(); }
+});
+
+c.addEventListener('click', (e) => {
+  e.preventDefault();
+  togglePause();
+});
+
+setMode();
+start();
+
+</script>
+</body>
+</html>
